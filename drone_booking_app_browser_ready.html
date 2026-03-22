@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Boekingssysteem voor dronevluchten</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/@turf/turf@7.2.0/turf.min.js"></script>
+  <!-- Leaflet.js en Leaflet Draw -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+  <style>
+    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    button, input, textarea { font: inherit; }
+  </style>
+</head>
+<body class="bg-slate-50">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useMemo, useRef, useState } = React;
+
+    const MAP_WIDTH = 760;
+    const MAP_HEIGHT = 420;
+    const MIN_LAT = 51.18;
+    const MAX_LAT = 51.25;
+    const MIN_LNG = 4.34;
+    const MAX_LNG = 4.47;
+
+    const initialRequests = [
+      {
+        id: "DRV-2026-001",
+        requester: "Jan Peeters",
+        contact: "jan@email.be",
+        phone: "0470 00 00 01",
+        startDate: "2026-03-24",
+        endDate: "2026-03-25",
+        location: "Antwerpen Haven",
+        purpose: "Inspectie van industriële installaties",
+        parcelSize: "5 hectare",
+        polygon: [
+          [51.2208, 4.394],
+          [51.223, 4.402],
+          [51.219, 4.409],
+          [51.2165, 4.399],
+        ],
+        status: "In behandeling",
+        notes: "Controle op vergunningen vereist.",
+      },
+      {
+        id: "DRV-2026-002",
+        requester: "Sara De Wilde",
+        contact: "sara@email.be",
+        phone: "0488 10 20 30",
+        startDate: "2026-04-02",
+        endDate: "2026-04-03",
+        location: "Merksem",
+        purpose: "Landmeting van een perceel",
+        parcelSize: "2,5 hectare",
+        polygon: [
+          [51.231, 4.394],
+          [51.2325, 4.399],
+          [51.2298, 4.404],
+          [51.2289, 4.397],
+        ],
+        status: "Goedgekeurd",
+        notes: "Vlucht enkel overdag uitvoeren.",
+      },
+    ];
+
+    const statusColors = {
+      "In behandeling": "bg-amber-100 text-amber-700 border-amber-200",
+      "Goedgekeurd": "bg-emerald-100 text-emerald-700 border-emerald-200",
+      "Afgekeurd": "bg-rose-100 text-rose-700 border-rose-200",
+    };
+
+    const initialAccounts = [
+      { role: "admin", name: "Kenneth Vranken", email: "kenneth.vranken3@gmail.com", password: "Admin.Kenneth" },
+      { role: "admin", name: "Admin 02", email: "admin02@dronevlucht.be", password: "admin02pass" },
+      { role: "admin", name: "Admin 03", email: "admin03@dronevlucht.be", password: "admin03pass" },
+      { role: "admin", name: "Admin 04", email: "admin04@dronevlucht.be", password: "admin04pass" },
+      { role: "admin", name: "Admin 05", email: "admin05@dronevlucht.be", password: "admin05pass" },
+      { role: "admin", name: "Admin 06", email: "admin06@dronevlucht.be", password: "admin06pass" },
+      { role: "admin", name: "Admin 07", email: "admin07@dronevlucht.be", password: "admin07pass" },
+      { role: "admin", name: "Admin 08", email: "admin08@dronevlucht.be", password: "admin08pass" },
+      { role: "admin", name: "Admin 09", email: "admin09@dronevlucht.be", password: "admin09pass" },
+      { role: "admin", name: "Admin 10", email: "admin10@dronevlucht.be", password: "admin10pass" },
+    ];
+
+    const demoPolygon = [
+      [51.2208, 4.394],
+      [51.223, 4.402],
+      [51.219, 4.409],
+      [51.2165, 4.399],
+    ];
+
+    function classNames(...items) {
+      return items.filter(Boolean).join(" ");
+    }
+
+    function Card({ className = "", children }) {
+      return <div className={classNames("rounded-3xl border border-slate-200 bg-white shadow-sm", className)}>{children}</div>;
+    }
+
+    function CardHeader({ children }) {
+      return <div className="p-6 pb-0">{children}</div>;
+    }
+
+    function CardTitle({ children }) {
+      return <h2 className="text-xl font-semibold text-slate-900">{children}</h2>;
+    }
+
+    function CardDescription({ children }) {
+      return <p className="mt-2 text-sm text-slate-600">{children}</p>;
+    }
+
+    function CardContent({ className = "", children }) {
+      return <div className={classNames("p-6", className)}>{children}</div>;
+    }
+
+    function Button({ className = "", variant = "default", children, ...props }) {
+      const variantClass = variant === "outline"
+        ? "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
+        : variant === "destructive"
+          ? "bg-rose-600 text-white hover:bg-rose-700"
+          : "bg-slate-900 text-white hover:bg-slate-800";
+      return (
+        <button
+          className={classNames("inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50", variantClass, className)}
+          {...props}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function Input(props) {
+      return <input {...props} className={classNames("w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-slate-500", props.className)} />;
+    }
+
+    function Textarea(props) {
+      return <textarea {...props} className={classNames("min-h-[96px] w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-slate-500", props.className)} />;
+    }
+
+    function Label({ children }) {
+      return <label className="text-sm font-medium text-slate-900">{children}</label>;
+    }
+
+    function StatusBadge({ status }) {
+      return <span className={classNames("inline-flex rounded-full border px-2.5 py-1 text-xs font-medium", statusColors[status] || "bg-slate-100 text-slate-700 border-slate-200")}>{status}</span>;
+    }
+
+    function getPolygonArea(points) {
+      if (!points || points.length < 3) return 0;
+      const ring = [...points.map(([lat, lng]) => [lng, lat]), [points[0][1], points[0][0]]];
+      const polygon = turf.polygon([ring]);
+      return turf.area(polygon);
+    }
+
+    function formatArea(points) {
+      const area = getPolygonArea(points);
+      if (!area) return "0 m²";
+      if (area >= 10000) return `${(area / 10000).toFixed(2)} ha`;
+      return `${Math.round(area)} m²`;
+    }
+
+    function createLeafletSearchUrl(query) {
+      return `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`;
+    }
+
+    function latLngToPixel(lat, lng) {
+      const x = ((lng - MIN_LNG) / (MAX_LNG - MIN_LNG)) * MAP_WIDTH;
+      const y = ((MAX_LAT - lat) / (MAX_LAT - MIN_LAT)) * MAP_HEIGHT;
+      return [x, y];
+    }
+
+    function pixelToLatLng(x, y) {
+      const lng = MIN_LNG + (x / MAP_WIDTH) * (MAX_LNG - MIN_LNG);
+      const lat = MAX_LAT - (y / MAP_HEIGHT) * (MAX_LAT - MIN_LAT);
+      return [Number(lat.toFixed(6)), Number(lng.toFixed(6))];
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function getRequestedWindowDays(startDate, endDate) {
+      if (!startDate || !endDate) return null;
+      const start = new Date(`${startDate}T00:00:00`);
+      const end = new Date(`${endDate}T00:00:00`);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return null;
+      const differenceInDays = Math.round((end - start) / 86400000);
+      return differenceInDays;
+    }
+
+    // Leaflet kaartcomponent
+    function MapLeaflet({ polygon, onChange, center, mode }) {
+      const mapRef = React.useRef(null);
+      const drawControlRef = React.useRef(null);
+      const polygonLayerRef = React.useRef(null);
+      const drawHandlerRef = React.useRef(null);
+      const onChangeRef = React.useRef(onChange);
+
+      React.useEffect(() => {
+        onChangeRef.current = onChange;
+      }, [onChange]);
+
+      React.useEffect(() => {
+        if (!mapRef.current) {
+          mapRef.current = L.map("leaflet-map", {
+            center: center || [51.22, 4.40],
+            zoom: 13,
+            scrollWheelZoom: true,
+          });
+          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> bijdragende',
+          }).addTo(mapRef.current);
+          polygonLayerRef.current = L.featureGroup().addTo(mapRef.current);
+          drawHandlerRef.current = function (e) {
+            if (e.layerType !== "polygon") return;
+            const latlngs = e.layer.getLatLngs()[0].map((point) => [point.lat, point.lng]);
+            onChangeRef.current(latlngs);
+          };
+        }
+      }, [center]);
+
+      React.useEffect(() => {
+        if (!polygonLayerRef.current || !mapRef.current) return;
+        polygonLayerRef.current.clearLayers();
+        if (polygon && polygon.length >= 3) {
+          const nextPolygon = L.polygon(polygon, { color: "#0f172a", fillOpacity: 0.3 });
+          polygonLayerRef.current.addLayer(nextPolygon);
+          mapRef.current.fitBounds(nextPolygon.getBounds(), { maxZoom: 16 });
+        }
+      }, [polygon]);
+
+      React.useEffect(() => {
+        if (!mapRef.current || !drawHandlerRef.current) return;
+        if (!drawControlRef.current) {
+          drawControlRef.current = new L.Control.Draw({
+            draw: {
+              polyline: false,
+              rectangle: false,
+              circle: false,
+              marker: false,
+              circlemarker: false,
+              polygon: { allowIntersection: false, showArea: true, shapeOptions: { color: "#0f172a" } },
+            },
+            edit: { featureGroup: polygonLayerRef.current },
+          });
+        }
+
+        const map = mapRef.current;
+        const isDrawControlActive = Boolean(map._drawControlEnabled);
+
+        if (mode === "draw") {
+          if (!isDrawControlActive) {
+            map.addControl(drawControlRef.current);
+            map._drawControlEnabled = true;
+          }
+          map.off(L.Draw.Event.CREATED, drawHandlerRef.current);
+          map.on(L.Draw.Event.CREATED, drawHandlerRef.current);
+          return;
+        }
+
+        map.off(L.Draw.Event.CREATED, drawHandlerRef.current);
+        if (isDrawControlActive) {
+          map.removeControl(drawControlRef.current);
+          map._drawControlEnabled = false;
+        }
+      }, [mode]);
+
+      React.useEffect(() => {
+        if (center && mapRef.current) {
+          mapRef.current.setView(center, 15);
+        }
+      }, [center]);
+      return <div id="leaflet-map" style={{ width: "100%", height: 420, borderRadius: 16, overflow: "hidden" }}></div>;
+    }
+
+    function PolygonEditor({ polygon, onChange, searchQuery, onSearchQueryChange }) {
+      const [searchError, setSearchError] = useState("");
+      const [searchCenter, setSearchCenter] = useState(null);
+      const [mapMode, setMapMode] = useState("search");
+      const [isLocating, setIsLocating] = useState(false);
+
+      const clearAll = () => onChange([]);
+      const fillDemo = () => onChange(demoPolygon);
+      const removeLast = () => onChange(polygon.slice(0, -1));
+
+      const handleSearch = async () => {
+        setSearchError("");
+        if (!searchQuery.trim()) return;
+        try {
+          const response = await fetch(createLeafletSearchUrl(searchQuery), { headers: { Accept: "application/json" } });
+          if (!response.ok) throw new Error("Zoekopdracht mislukt");
+          const data = await response.json();
+          if (!Array.isArray(data) || !data.length) {
+            setSearchError("Geen locatie gevonden.");
+            return;
+          }
+          const result = data[0];
+          setSearchCenter([Number(result.lat), Number(result.lon)]);
+        } catch (error) {
+          setSearchError("Locatie zoeken is momenteel niet gelukt.");
+        }
+      };
+
+      const handleUseCurrentLocation = () => {
+        setSearchError("");
+        if (!navigator.geolocation) {
+          setSearchError("Je browser ondersteunt geen locatiebepaling.");
+          return;
+        }
+
+        setIsLocating(true);
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            setSearchCenter([position.coords.latitude, position.coords.longitude]);
+            setIsLocating(false);
+          },
+          () => {
+            setSearchError("Je locatie kon niet worden opgehaald.");
+            setIsLocating(false);
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0,
+          }
+        );
+      };
+
+      return (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="mb-4 grid gap-3">
+            <div>
+              <p className="text-sm font-medium text-slate-900">Kaart met polygon drawing</p>
+              <p className="mt-1 text-xs text-slate-500">Kies eerst of je een locatie op de kaart zoekt of meteen het perceel als polygon tekent.</p>
+            </div>
+
+            <div className="grid gap-2">
+              <Label>Kies kaartmodus</Label>
+              <div className="inline-flex w-full max-w-md rounded-2xl border border-slate-200 bg-white p-1">
+                <button
+                  type="button"
+                  className={classNames(
+                    "flex-1 rounded-xl px-3 py-2 text-sm font-medium transition",
+                    mapMode === "search" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"
+                  )}
+                  onClick={() => setMapMode("search")}
+                >
+                  Zoeken op kaart
+                </button>
+                <button
+                  type="button"
+                  className={classNames(
+                    "flex-1 rounded-xl px-3 py-2 text-sm font-medium transition",
+                    mapMode === "draw" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"
+                  )}
+                  onClick={() => setMapMode("draw")}
+                >
+                  Polygon tekenen
+                </button>
+              </div>
+
+              {mapMode === "search" ? (
+                <>
+                  <Label>Zoek locatie</Label>
+                  <div className="flex flex-wrap gap-2">
+                    <div className="min-w-[220px] flex-1">
+                      <Input value={searchQuery} onChange={(e) => onSearchQueryChange(e.target.value)} placeholder="Zoek op adres, gemeente of locatie" />
+                    </div>
+                    <Button type="button" variant="outline" onClick={handleSearch}>Zoeken</Button>
+                    <Button type="button" variant="outline" onClick={handleUseCurrentLocation} disabled={isLocating}>
+                      {isLocating ? "Locatie ophalen..." : "Mijn locatie"}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-slate-500">Zoek eerst de juiste locatie of gebruik je huidige positie en schakel daarna over naar tekenen om het perceel af te bakenen.</p>
+                </>
+              ) : (
+                <>
+                  <Label>Polygon tekenen</Label>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" onClick={fillDemo}>Voorbeeld</Button>
+                    <Button type="button" variant="outline" onClick={removeLast} disabled={!polygon.length}>Laatste punt weg</Button>
+                    <Button type="button" variant="outline" onClick={clearAll} disabled={!polygon.length}>Wissen</Button>
+                  </div>
+                  <p className="text-xs text-slate-500">In deze modus verschijnen de draw-controls op de kaart zodat je een nieuw polygon kunt tekenen.</p>
+                </>
+              )}
+
+              {searchError && mapMode === "search" ? <p className="text-xs text-rose-600">{searchError}</p> : null}
+              <p className="text-xs text-slate-500">Oppervlakte wordt berekend met Turf.js. Deze browserversie werkt direct zonder buildstap.</p>
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+            <MapLeaflet polygon={polygon} onChange={onChange} center={searchCenter} mode={mapMode} />
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <span className="inline-flex rounded-full border border-slate-200 bg-white px-2 py-1">Modus: {mapMode === "search" ? "Zoeken" : "Tekenen"}</span>
+            <span className="inline-flex rounded-full border border-slate-200 bg-white px-2 py-1">{polygon.length} hoekpunten</span>
+            <span className="inline-flex rounded-full border border-slate-200 bg-white px-2 py-1">Polygon blijft zichtbaar</span>
+            <span className="inline-flex rounded-full border border-slate-200 bg-white px-2 py-1">Oppervlakte: {formatArea(polygon)}</span>
+            <span className="inline-flex rounded-full border border-slate-200 bg-white px-2 py-1">Zoekresultaat centreert de kaart</span>
+            <span className="inline-flex rounded-full border border-slate-200 bg-white px-2 py-1">Minimaal 3 punten nodig</span>
+          </div>
+        </div>
+      );
+    }
+
+    function RequestSummary({ request }) {
+      return (
+        <div className="rounded-xl border border-slate-200 p-3">
+          <div className="flex justify-between gap-3">
+            <span className="font-medium text-slate-900">{request.id}</span>
+            <StatusBadge status={request.status} />
+          </div>
+          <p className="mt-2 text-sm text-slate-600">Gewenste vluchtperiode: {request.startDate} → {request.endDate}</p>
+          <p className="text-sm text-slate-600">{request.location}</p>
+          <p className="mt-1 text-xs text-slate-500">Polygon punten: {request.polygon?.length || 0}</p>
+          <p className="text-xs text-slate-500">Oppervlakte: {formatArea(request.polygon || [])}</p>
+        </div>
+      );
+    }
+
+    function ApplicantPortal({ requests, onCreateRequest, portalRole = "aanvrager", currentUser = null }) {
+      const isAdminView = portalRole === "admin";
+      const applicantName = !isAdminView && currentUser ? currentUser.name : "";
+      const applicantEmail = !isAdminView && currentUser ? currentUser.email : "";
+      const [form, setForm] = useState({
+        name: applicantName,
+        email: applicantEmail,
+        phone: "",
+        startDate: "",
+        endDate: "",
+        location: "",
+        purpose: "",
+        parcelSize: "",
+        polygon: [],
+        notes: "",
+      });
+      const [searchQuery, setSearchQuery] = useState("");
+      const [errors, setErrors] = useState({});
+      const requestedWindowDays = getRequestedWindowDays(form.startDate, form.endDate);
+      const showTightWindowWarning = requestedWindowDays !== null && requestedWindowDays <= 3;
+      const visibleRequests = isAdminView
+        ? requests
+        : requests.filter((request) => (request.contact || "").toLowerCase() === applicantEmail.toLowerCase());
+
+      const validate = () => {
+        const nextErrors = {};
+        if (!form.name.trim()) nextErrors.name = "Naam aanvrager is verplicht.";
+        if (!form.email.trim()) nextErrors.email = "E-mail is verplicht.";
+        if (!form.phone.trim()) nextErrors.phone = "Telefoonnummer is verplicht.";
+        if (!form.startDate) nextErrors.startDate = "Vroegste gewenste vluchtdatum is verplicht.";
+        if (!form.endDate) nextErrors.endDate = "Uiterste gewenste vluchtdatum is verplicht.";
+        if (form.startDate && form.endDate && form.endDate < form.startDate) nextErrors.endDate = "De uiterste gewenste vluchtdatum mag niet voor de vroegste gewenste vluchtdatum liggen.";
+        if (!form.location.trim()) nextErrors.location = "Locatie is verplicht.";
+        if (!form.parcelSize.trim()) nextErrors.parcelSize = "Perceelsgrootte is verplicht.";
+        if (!form.purpose.trim()) nextErrors.purpose = "Doel van de vlucht is verplicht.";
+        if ((form.polygon || []).length < 3) nextErrors.polygon = "Duid minstens 3 punten aan op de kaart.";
+        setErrors(nextErrors);
+        return Object.keys(nextErrors).length === 0;
+      };
+
+      const handleSubmit = () => {
+        if (!validate()) return;
+        onCreateRequest(form);
+        setForm({ name: applicantName, email: applicantEmail, phone: "", startDate: "", endDate: "", location: "", purpose: "", parcelSize: "", polygon: [], notes: "" });
+        setSearchQuery("");
+        setErrors({});
+      };
+
+      return (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Nieuwe aanvraag</CardTitle>
+              <CardDescription>{isAdminView ? "Dien als admin ook manueel een dronevlucht in en duid meteen het perceel aan op de kaart." : "Vraag een dronevlucht aan en duid meteen het perceel aan op de kaart."}</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              <div className="grid gap-2">
+                <Label>Naam aanvrager</Label>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Naam aanvrager" disabled={!isAdminView && Boolean(currentUser)} />
+                {errors.name ? <p className="text-xs text-rose-600">{errors.name}</p> : null}
+              </div>
+
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label>E-mail</Label>
+                  <Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="naam@email.be" disabled={!isAdminView && Boolean(currentUser)} />
+                  {errors.email ? <p className="text-xs text-rose-600">{errors.email}</p> : null}
+                </div>
+                <div className="grid gap-2">
+                  <Label>Telefoonnummer</Label>
+                  <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="04xx xx xx xx" />
+                  {errors.phone ? <p className="text-xs text-rose-600">{errors.phone}</p> : null}
+                </div>
+              </div>
+
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label>Vroegste gewenste vluchtdatum</Label>
+                  <Input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} />
+                  {errors.startDate ? <p className="text-xs text-rose-600">{errors.startDate}</p> : null}
+                </div>
+                <div className="grid gap-2">
+                  <Label>Uiterste gewenste vluchtdatum</Label>
+                  <Input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} />
+                  {errors.endDate ? <p className="text-xs text-rose-600">{errors.endDate}</p> : null}
+                </div>
+              </div>
+
+              {showTightWindowWarning ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  Waarschuwing: er zitten maar 3 dagen of minder tussen de vroegste en uiterste gewenste vluchtdatum. Dit is mogelijk niet haalbaar in de planning.
+                </div>
+              ) : null}
+
+              <div className="grid gap-2">
+                <Label>Locatie</Label>
+                <Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Adres of omschrijving van de locatie" />
+                {errors.location ? <p className="text-xs text-rose-600">{errors.location}</p> : null}
+              </div>
+
+              <div className="grid gap-2">
+                <Label>Perceelsgrootte</Label>
+                <Input value={form.parcelSize} onChange={(e) => setForm({ ...form, parcelSize: e.target.value })} placeholder="Bijv. 5 hectare" />
+                {errors.parcelSize ? <p className="text-xs text-rose-600">{errors.parcelSize}</p> : null}
+              </div>
+
+              <PolygonEditor searchQuery={searchQuery} onSearchQueryChange={setSearchQuery} polygon={form.polygon} onChange={(polygon) => setForm({ ...form, polygon })} />
+              {errors.polygon ? <p className="-mt-1 text-xs text-rose-600">{errors.polygon}</p> : null}
+
+              <div className="grid gap-2">
+                <Label>Doel van de vlucht</Label>
+                <Textarea value={form.purpose} onChange={(e) => setForm({ ...form, purpose: e.target.value })} placeholder="Beschrijf waarvoor de dronevlucht dient" />
+                {errors.purpose ? <p className="text-xs text-rose-600">{errors.purpose}</p> : null}
+              </div>
+
+              <div className="grid gap-2">
+                <Label>Extra notities</Label>
+                <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Extra info voor de admin" />
+              </div>
+
+              <Button onClick={handleSubmit}>Indienen</Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>{isAdminView ? "Aanvragenoverzicht" : "Mijn aanvragen"}</CardTitle>
+              <CardDescription>{isAdminView ? "Overzicht van de ingediende aanvragen en hun status." : "Overzicht van de ingediende aanvragen en hun status."}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {visibleRequests.length
+                ? visibleRequests.map((request) => <RequestSummary key={request.id} request={request} />)
+                : <p className="text-sm text-slate-500">Er zijn nog geen aanvragen voor dit account.</p>}
+            </CardContent>
+          </Card>
+        </div>
+      );
+    }
+
+    function AdminPortal({ requests, onUpdateStatus }) {
+      return (
+        <div className="space-y-4">
+          {requests.map((request) => (
+            <Card key={request.id} className="rounded-2xl">
+              <CardContent>
+                <div className="flex flex-col gap-4 md:flex-row md:justify-between">
+                  <div>
+                    <p className="font-bold text-slate-900">{request.requester}</p>
+                    <p className="text-sm text-slate-600">{request.contact}</p>
+                    <p className="text-sm text-slate-600">{request.phone}</p>
+                    <p className="text-sm text-slate-600">Gewenste vluchtperiode: {request.startDate} → {request.endDate}</p>
+                    <p className="text-sm text-slate-600">{request.location}</p>
+                    <p className="text-sm text-slate-600">Perceelsgrootte: {request.parcelSize}</p>
+                    <p className="text-sm text-slate-600">Polygon punten: {request.polygon?.length || 0}</p>
+                    <p className="text-sm text-slate-600">Oppervlakte: {formatArea(request.polygon || [])}</p>
+                    <p className="mt-2 text-sm text-slate-600">{request.purpose}</p>
+                    {request.notes ? <p className="mt-1 text-xs text-slate-500">{request.notes}</p> : null}
+                  </div>
+                  <div className="flex flex-col items-start gap-3 md:items-end">
+                    <StatusBadge status={request.status} />
+                    <div className="mt-3 flex gap-2">
+                      <Button onClick={() => onUpdateStatus(request.id, "Goedgekeurd")}>OK</Button>
+                      <Button variant="destructive" onClick={() => onUpdateStatus(request.id, "Afgekeurd")}>Afkeuren</Button>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      );
+    }
+
+    function LoginPage({ accounts, onLogin, onRegister }) {
+      const [mode, setMode] = useState("login");
+      const [email, setEmail] = useState("");
+      const [password, setPassword] = useState("");
+      const [error, setError] = useState("");
+      const [registrationForm, setRegistrationForm] = useState({
+        name: "",
+        email: "",
+        password: "",
+        confirmPassword: "",
+      });
+
+      const handleSubmit = () => {
+        const normalizedEmail = email.trim().toLowerCase();
+        const matchingAccount = accounts.find((account) => account.email === normalizedEmail && account.password === password);
+        if (!matchingAccount) {
+          setError("Onjuiste inloggegevens.");
+          return;
+        }
+
+        onLogin({
+          role: matchingAccount.role,
+          name: matchingAccount.name,
+          email: matchingAccount.email,
+        });
+      };
+
+      const handleRegister = () => {
+        const normalizedEmail = registrationForm.email.trim().toLowerCase();
+
+        if (!registrationForm.name.trim()) {
+          setError("Naam is verplicht om een account aan te maken.");
+          return;
+        }
+        if (!normalizedEmail) {
+          setError("E-mail is verplicht om een account aan te maken.");
+          return;
+        }
+        if (!registrationForm.password) {
+          setError("Wachtwoord is verplicht om een account aan te maken.");
+          return;
+        }
+        if (registrationForm.password.length < 6) {
+          setError("Gebruik minstens 6 tekens voor het wachtwoord.");
+          return;
+        }
+        if (registrationForm.password !== registrationForm.confirmPassword) {
+          setError("De wachtwoorden komen niet overeen.");
+          return;
+        }
+        if (accounts.some((account) => account.email === normalizedEmail)) {
+          setError("Er bestaat al een account met dit e-mailadres.");
+          return;
+        }
+
+        const newAccount = {
+          role: "aanvrager",
+          name: registrationForm.name.trim(),
+          email: normalizedEmail,
+          password: registrationForm.password,
+        };
+
+        onRegister(newAccount);
+        onLogin({
+          role: newAccount.role,
+          name: newAccount.name,
+          email: newAccount.email,
+        });
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-50 p-6 text-slate-900">
+          <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-6xl items-center">
+            <div className="grid w-full gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+              <div className="rounded-[2rem] border border-slate-200 bg-white p-8 shadow-sm">
+                <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">Dronevluchten</p>
+                <h1 className="mt-4 text-4xl font-semibold tracking-tight text-slate-900">Log in om verder te gaan</h1>
+                <p className="mt-4 max-w-xl text-base text-slate-600">Gebruik je e-mail en wachtwoord. Aanvragers kunnen hieronder een account registreren. Admin-accounts worden uitsluitend in de code beheerd.</p>
+              </div>
+
+              <Card className="rounded-[2rem] border-slate-200">
+                <CardHeader>
+                  <div className="inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-1">
+                    <button
+                      type="button"
+                      className={classNames(
+                        "rounded-xl px-4 py-2 text-sm font-medium transition",
+                        mode === "login" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                      )}
+                      onClick={() => {
+                        setMode("login");
+                        setError("");
+                      }}
+                    >
+                      Inloggen
+                    </button>
+                    <button
+                      type="button"
+                      className={classNames(
+                        "rounded-xl px-4 py-2 text-sm font-medium transition",
+                        mode === "register" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                      )}
+                      onClick={() => {
+                        setMode("register");
+                        setError("");
+                      }}
+                    >
+                      Registreren
+                    </button>
+                  </div>
+                  <CardTitle>{mode === "login" ? "Inloggen" : "Registreren als aanvrager"}</CardTitle>
+                  <CardDescription>{mode === "login" ? "Vul je gegevens in. De rol wordt automatisch herkend." : "Maak een nieuw aanvragersaccount aan om aanvragen te kunnen indienen."}</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-4">
+                  {mode === "login" ? (
+                    <>
+                      <div className="grid gap-2">
+                        <Label>E-mail</Label>
+                        <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="naam@email.be" />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label>Wachtwoord</Label>
+                        <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Voer je wachtwoord in" />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="grid gap-2">
+                        <Label>Naam</Label>
+                        <Input value={registrationForm.name} onChange={(e) => setRegistrationForm({ ...registrationForm, name: e.target.value })} placeholder="Volledige naam" />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label>E-mail</Label>
+                        <Input type="email" value={registrationForm.email} onChange={(e) => setRegistrationForm({ ...registrationForm, email: e.target.value })} placeholder="naam@email.be" />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label>Wachtwoord</Label>
+                        <Input type="password" value={registrationForm.password} onChange={(e) => setRegistrationForm({ ...registrationForm, password: e.target.value })} placeholder="Kies een wachtwoord" />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label>Bevestig wachtwoord</Label>
+                        <Input type="password" value={registrationForm.confirmPassword} onChange={(e) => setRegistrationForm({ ...registrationForm, confirmPassword: e.target.value })} placeholder="Herhaal je wachtwoord" />
+                      </div>
+                    </>
+                  )}
+
+                  {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
+
+                  <Button onClick={mode === "login" ? handleSubmit : handleRegister}>{mode === "login" ? "Log in" : "Account aanmaken"}</Button>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [session, setSession] = useState(null);
+      const [accounts, setAccounts] = useState(initialAccounts);
+      const [requests, setRequests] = useState(initialRequests);
+      const [showAdminRequestForm, setShowAdminRequestForm] = useState(false);
+
+      const createRequest = (form) => {
+        setRequests((current) => [
+          {
+            id: `DRV-${Date.now()}`,
+            requester: form.name,
+            contact: form.email,
+            phone: form.phone,
+            startDate: form.startDate,
+            endDate: form.endDate,
+            location: form.location,
+            purpose: form.purpose,
+            parcelSize: form.parcelSize,
+            polygon: form.polygon,
+            notes: form.notes,
+            status: "In behandeling",
+          },
+          ...current,
+        ]);
+      };
+
+      const updateStatus = (id, status) => {
+        setRequests((current) => current.map((request) => (request.id === id ? { ...request, status } : request)));
+      };
+
+      const createAdminRequest = (form) => {
+        createRequest(form);
+        setShowAdminRequestForm(false);
+      };
+
+      const registerApplicant = (account) => {
+        setAccounts((current) => [...current, account]);
+      };
+
+      if (!session) {
+        return <LoginPage accounts={accounts} onLogin={setSession} onRegister={registerApplicant} />;
+      }
+
+      return (
+        <div className="min-h-screen bg-slate-50 p-6 text-slate-900">
+          <div className="mx-auto max-w-6xl">
+            <div className="mb-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h1 className="text-2xl font-semibold">Boekingssysteem voor dronevluchten</h1>
+              <p className="mt-2 text-sm text-slate-600">Deze versie is browserklaar als één HTML-bestand. Open het bestand rechtstreeks in je browser en de app werkt meteen.</p>
+              <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-900">Ingelogd als {session.name}</p>
+                  <p className="text-sm text-slate-600">Rol: {session.role === "aanvrager" ? "Aanvrager" : "Admin"}</p>
+                </div>
+                <Button variant="outline" onClick={() => setSession(null)}>Uitloggen</Button>
+              </div>
+            </div>
+
+            {session.role === "aanvrager" ? (
+              <ApplicantPortal requests={requests} onCreateRequest={createRequest} currentUser={session} />
+            ) : (
+              <div className="space-y-6">
+                <AdminPortal requests={requests} onUpdateStatus={updateStatus} />
+                <Card>
+                  <CardContent className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="text-lg font-semibold text-slate-900">Nieuwe aanvraag toevoegen</p>
+                      <p className="text-sm text-slate-600">Open het aanvraagformulier alleen wanneer je als admin manueel een nieuwe aanvraag wilt indienen.</p>
+                    </div>
+                    <Button variant={showAdminRequestForm ? "outline" : "default"} onClick={() => setShowAdminRequestForm((current) => !current)}>
+                      {showAdminRequestForm ? "Aanvraagformulier sluiten" : "Nieuwe aanvraag"}
+                    </Button>
+                  </CardContent>
+                </Card>
+                {showAdminRequestForm ? <ApplicantPortal requests={requests} onCreateRequest={createAdminRequest} portalRole="admin" /> : null}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    window.__testables__ = {
+      getPolygonArea,
+      formatArea,
+      createLeafletSearchUrl,
+      latLngToPixel,
+      pixelToLatLng,
+      clamp,
+    };
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
